@@ -1,0 +1,32 @@
+name: Nightly Paper Analysis
+
+on:
+  schedule:
+    # 每天 01:00 Asia/Shanghai (UTC+8) = 17:00 UTC
+    - cron: '0 17 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  analyze-papers:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout tools repo
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Run paper analyzer
+      run: |
+        python src/paper_analyzer.py
+      
+    - name: Upload analysis results
+      uses: actions/upload-artifact@v4
+      with:
+        name: paper-analysis-${{ github.run_id }}
+        path: |
+          paper_analysis.json
+          paper_analysis.md
