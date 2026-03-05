@@ -101,6 +101,24 @@ ArXiv API → arxiv_tracker.py → 论文数据库 (JSON)
 - 夜间执行（00:00-08:00）以节省日间资源
 - 论文分析限制数量，优先高相关性论文
 
+## API配置状态
+
+| 服务 | 状态 | 备注 |
+|------|------|------|
+| Kimi API | ⚠️ 401错误 | Key无效或格式问题 |
+| 回退模式 | ✅ 可用 | 使用关键词模拟分析 |
+
+### 日志系统
+
+开发过程全部记录到日志文件，避免阻塞对话：
+- `logs/kimi_code_YYYYMMDD.log` - API调用
+- `logs/llm_analyzer_YYYYMMDD.log` - 论文分析
+- `logs/weekly_report_YYYYMMDD.log` - 周报生成
+
+**日志读取时机：**
+1. 用户主动询问时
+2. 每日晨报生成时
+
 ---
 
 🤖 _Built by Kimi Claw for Ezio's RL research journey_

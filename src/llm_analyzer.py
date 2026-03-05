@@ -1,29 +1,32 @@
 #!/usr/bin/env python3
 """
-LLM Paper Deep Analyzer
-使用LLM（通过Copilot/GitHub API）深度分析论文
-提取核心贡献、方法细节、实验结果和与你研究的关联
+LLM Paper Deep Analyzer - Using Kimi API (with fallback)
+深度分析论文，提取核心贡献和与用户研究的关联
 """
 
 import json
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
 # 配置
-PAPERS_DB_PATH = "/root/.openclaw/workspace/reports/arxiv_papers_db.json"
-ANALYSIS_DB_PATH = "/root/.openclaw/workspace/reports/llm_paper_analysis.json"
+REPORTS_DIR = "/root/.openclaw/workspace/reports"
+PAPERS_DB_PATH = os.path.join(REPORTS_DIR, "arxiv_papers_db.json")
+ANALYSIS_DB_PATH = os.path.join(REPORTS_DIR, "llm_paper_analysis.json")
+LOGS_DIR = "/root/.openclaw/workspace/logs"
 
-# 用户研究背景（用于LLM分析上下文）
-USER_CONTEXT = """
-用户背景：
-- 开发机器人运控RL框架 (Ezio's RL_ToolBox)
-- 基于Instinct Lab / Isaac Lab架构
-- 当前项目：CNHK ROSE Team人形机器人遥操
-- 技术栈：Isaac Gym/Lab, MuJoCo, ROS2
-- 核心痛点：Simulator API统一、Train/Deploy分离、Asset化管理
-- 关注方向：Sim2Real, World Model, Transformer for Robotics, Continual Learning
-"""
+# 确保目录存在
+os.makedirs(REPORTS_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+
+def log_message(msg, level="INFO"):
+    """记录日志到文件"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    log_file = os.path.join(LOGS_DIR, f'llm_analyzer_{datetime.now().strftime("%Y%m%d")}.log')
+    with open(log_file, 'a', encoding='utf-8') as f:
+        f.write(f"[{timestamp}] [{level}] {msg}\n")
 
 
 def load_papers_db():
@@ -44,230 +47,336 @@ def load_llm_analysis_db():
 
 def save_llm_analysis_db(db):
     """保存LLM分析数据库"""
-    os.makedirs(os.path.dirname(ANALYSIS_DB_PATH), exist_ok=True)
     with open(ANALYSIS_DB_PATH, 'w') as f:
         json.dump(db, f, indent=2)
 
 
-def build_analysis_prompt(paper):
-    """构建LLM分析提示词"""
-    return f"""请分析以下机器人/AI论文，并按照指定格式输出分析结果。
+def analyze_paper_with_kimi(paper):
+    """使用Kimi API分析论文"""
+    title = paper.get('title', '')
+    abstract = paper.get('summary', '')
+    authors = paper.get('author_str', '')
+    
+    # 构建提示词
+    prompt = f"""作为机器人运控领域的研究助手，请深度分析以下论文：
 
-{USER_CONTEXT}
-
-论文信息：
-标题: {paper.get('title')}
-作者: {paper.get('author_str')}
+【论文信息】
+标题: {title}
+作者: {authors}
 类别: {', '.join(paper.get('categories', []))}
 
-摘要:
-{paper.get('summary')}
+【摘要】
+{abstract}
 
-请按以下格式输出分析：
+【分析要求】
+请按以下结构提供分析（使用中文）：
 
-## 一句话总结
-（用一句话概括论文的核心贡献）
+1. 一句话总结：
+用一句话概括核心贡献
 
-## 核心方法
-- 方法名称：
-- 关键技术：
-- 创新点：
+2. 核心方法：
+- 解决什么问题
+- 关键技术/算法
+- 与主流方法的区别
 
-## 实验验证
-- 实验环境：
-- 主要结果：
-- 与SOTA对比：
+3. 实验验证：
+- 仿真环境/真实机器人
+- 主要结果指标
+- 与SOTA对比
 
-## 与Ezio研究的关联度
-- 相关领域：
-- 可直接借鉴的技术/思路：
-- 建议阅读优先级（高/中/低）：
+4. 与你研究的关联度（1-10分）：
+考虑：是否与legged locomotion/RL/sim2real相关，是否可借鉴到Ezio's RL_ToolBox
 
-## 代码/资源可用性
-- 是否提到开源代码：
-- 项目链接（如有）：
+5. 可借鉴的技术点：
+列出可以直接应用或参考的思路
 
-## 批判性思考
-- 局限性：
-- 可改进方向：
+6. 代码/资源可用性：
+是否提及开源代码、数据集链接
+
+7. 局限性与改进方向：
 """
+    
+    log_message(f"Calling Kimi API for: {title[:50]}...")
+    
+    try:
+        result_file = os.path.join(LOGS_DIR, 'last_kimi_result.txt')
+        
+        cmd = [
+            'python3', '/tmp/kimi-claw-tools/src/kimi_code.py',
+            'ask',
+            '--prompt', prompt,
+            '--output', result_file
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        
+        if result.returncode != 0:
+            log_message(f"Kimi API call failed: {result.stderr}", "ERROR")
+            return None
+        
+        if os.path.exists(result_file):
+            with open(result_file, 'r', encoding='utf-8') as f:
+                response = f.read()
+            if response and not response.startswith('Error'):
+                log_message(f"Kimi API response received, length: {len(response)}")
+                return response
+            else:
+                log_message(f"Kimi API returned error: {response}", "ERROR")
+                return None
+        else:
+            log_message("No result file generated", "ERROR")
+            return None
+            
+    except Exception as e:
+        log_message(f"Kimi API error: {str(e)}", "ERROR")
+        return None
 
 
 def mock_llm_analysis(paper):
-    """
-    模拟LLM分析结果
-    实际部署时会调用GitHub Copilot API或Kimi API
-    """
-    # 基于论文内容的关键词匹配生成简单分析
-    title = paper.get('title', '').lower()
-    summary = paper.get('summary', '').lower()
-    text = title + ' ' + summary
+    """模拟LLM分析（API不可用时使用）"""
+    title = paper.get('title', '')
+    summary = paper.get('summary', '')
+    text = (title + ' ' + summary).lower()
     
-    # 简单相关性判断
-    relevance = "低"
+    # 基于关键词的简单分析
+    relevance_score = 5
     if any(kw in text for kw in ['locomotion', 'walking', 'quadruped', 'humanoid']):
-        relevance = "高"
-    elif any(kw in text for kw in ['rl', 'reinforcement learning', 'robot']):
-        relevance = "中"
+        relevance_score = 8
+    if 'reinforcement learning' in text or 'rl' in text:
+        relevance_score += 1
+    if 'sim2real' in text:
+        relevance_score += 1
     
-    # 检测是否有代码
-    has_code = 'code' in text or 'github' in text or 'open source' in text
+    relevance_score = min(relevance_score, 10)
+    
+    priority = "高" if relevance_score >= 8 else "中" if relevance_score >= 5 else "低"
+    
+    return f"""1. 一句话总结：
+本文研究了{title[:50]}...（模拟分析）
+
+2. 核心方法：
+- 问题：待详细分析
+- 技术：基于论文摘要，涉及{', '.join(paper.get('categories', ['unknown'])[:2])}
+- 创新：待详细分析
+
+3. 实验验证：
+- 环境：待确认
+- 结果：待提取
+- 对比：待对比
+
+4. 与你研究的关联度（{relevance_score}/10）：
+基于关键词匹配（locomotion/RL/sim2real）的初步评估
+
+5. 可借鉴的技术点：
+- 需详细阅读后确定
+
+6. 代码/资源可用性：
+待检查论文中是否提及
+
+7. 局限性与改进方向：
+待详细分析
+
+---
+注意：此为模拟分析。API配置完成后将提供深度解读。
+""", relevance_score, priority
+
+
+def parse_analysis_response(response, paper, is_mock=False):
+    """解析响应为结构化数据"""
+    if not response:
+        return None
+    
+    if is_mock:
+        text, score, priority = response
+        return {
+            "full_analysis": text,
+            "relevance_score": score,
+            "priority": priority,
+            "paper_title": paper.get('title'),
+            "paper_link": paper.get('link'),
+            "analyzed_at": datetime.now().isoformat(),
+            "status": "mock"
+        }
+    
+    # 尝试提取关联度分数
+    relevance_score = 5
+    try:
+        import re
+        match = re.search(r'关联度.*?([0-9]+)', response)
+        if match:
+            relevance_score = int(match.group(1))
+        else:
+            match = re.search(r'([0-9]+)/10', response)
+            if match:
+                relevance_score = int(match.group(1))
+    except:
+        pass
+    
+    priority = "高" if relevance_score >= 8 else "中" if relevance_score >= 5 else "低"
     
     return {
-        "one_line_summary": f"本文研究了{paper.get('title')[:50]}...",
-        "core_method": {
-            "name": "待LLM分析",
-            "key_techniques": [],
-            "innovation": "待分析"
-        },
-        "experiments": {
-            "environment": "待分析",
-            "results": "待分析",
-            "sota_comparison": "待分析"
-        },
-        "relevance": {
-            "score": relevance,
-            "related_areas": [],
-            "actionable_insights": [],
-            "priority": relevance
-        },
-        "code_availability": {
-            "has_code": has_code,
-            "links": []
-        },
-        "critical_thinking": {
-            "limitations": "待分析",
-            "improvements": "待分析"
-        },
+        "full_analysis": response,
+        "relevance_score": relevance_score,
+        "priority": priority,
+        "paper_title": paper.get('title'),
+        "paper_link": paper.get('link'),
         "analyzed_at": datetime.now().isoformat(),
-        "status": "mock"  # 标记为模拟结果
+        "status": "completed"
     }
 
 
-def analyze_papers_with_llm(papers, limit=5):
-    """
-    对论文进行LLM深度分析
-    当前使用模拟，后续接入真实LLM API
-    """
+def analyze_papers(papers, limit=3):
+    """分析论文"""
     db = load_llm_analysis_db()
     
+    # 筛选高相关且未分析的论文
+    candidates = []
+    for paper in papers:
+        uid = paper.get('uid')
+        if uid not in db.get("analyses", {}):
+            score = calculate_quick_score(paper)
+            candidates.append((score, paper))
+    
+    candidates.sort(reverse=True, key=lambda x: x[0])
+    
     analyzed_count = 0
-    for paper in papers[:limit]:
+    use_mock = False
+    
+    for score, paper in candidates[:limit]:
         uid = paper.get('uid')
         
-        # 跳过已分析的论文
-        if uid in db["analyses"] and db["analyses"][uid].get("status") != "mock":
-            continue
+        log_message(f"Analyzing paper (score {score}): {paper.get('title', '')[:60]}...")
         
-        print(f"Analyzing: {paper.get('title')[:60]}...")
+        # 先尝试Kimi API
+        response = analyze_paper_with_kimi(paper)
+        is_mock = False
         
-        # TODO: 调用真实LLM API
-        # prompt = build_analysis_prompt(paper)
-        # analysis = call_llm_api(prompt)
+        if not response:
+            # API失败，使用模拟
+            log_message("API failed, using mock analysis")
+            response = mock_llm_analysis(paper)
+            is_mock = True
+            use_mock = True
         
-        analysis = mock_llm_analysis(paper)
-        db["analyses"][uid] = analysis
-        analyzed_count += 1
+        if response:
+            analysis = parse_analysis_response(response, paper, is_mock=is_mock)
+            if analysis:
+                db.setdefault("analyses", {})[uid] = analysis
+                analyzed_count += 1
+                log_message(f"Analysis completed for {paper.get('title', '')[:60]}...")
     
     save_llm_analysis_db(db)
+    
+    if use_mock:
+        log_message("Note: Using mock analysis due to API unavailability", "WARN")
+    
     return analyzed_count
+
+
+def calculate_quick_score(paper):
+    """快速计算相关性分数"""
+    text = (paper.get('title', '') + ' ' + paper.get('summary', '')).lower()
+    score = 0
+    
+    keywords = [
+        ("locomotion", 20), ("walking", 20), ("quadruped", 20), ("humanoid", 20),
+        ("reinforcement learning", 15), ("rl ", 15), ("policy", 10),
+        ("sim2real", 15), ("domain randomization", 10),
+        ("tendon", 10), ("exoskeleton", 10),
+        ("isaac", 10), ("mujoco", 10),
+    ]
+    
+    for kw, pts in keywords:
+        if kw in text:
+            score += pts
+    
+    return min(score, 100)
 
 
 def generate_llm_report(top_n=3):
     """生成LLM分析报告"""
     db = load_llm_analysis_db()
     papers_db = load_papers_db()
-    
-    # 创建uid到论文的映射
     papers_map = {p['uid']: p for p in papers_db.get('papers', [])}
     
     lines = []
-    lines.append("## 🧠 LLM深度论文分析")
+    lines.append("## 🔬 LLM深度论文分析")
     lines.append("")
-    lines.append("_基于Kimi/LLM的论文核心贡献提取_")
+    lines.append("_基于Kimi K2.5的深度解读_")
     lines.append("")
     
-    # 获取高优先级分析
-    high_priority = [
-        (uid, analysis) for uid, analysis in db["analyses"].items()
-        if analysis.get("relevance", {}).get("priority") == "高"
-    ]
+    analyses = []
+    for uid, analysis in db.get("analyses", {}).items():
+        analyses.append((analysis.get("relevance_score", 0), uid, analysis))
     
-    if high_priority:
-        lines.append("### 🔥 高优先级论文深度解读")
+    analyses.sort(reverse=True)
+    
+    if analyses:
+        lines.append(f"### 📊 本周深度分析 ({len(analyses)}篇)")
         lines.append("")
         
-        for uid, analysis in high_priority[:top_n]:
+        for score, uid, analysis in analyses[:top_n]:
             paper = papers_map.get(uid, {})
-            lines.append(format_llm_analysis(paper, analysis))
+            is_mock = analysis.get("status") == "mock"
+            emoji = "🔥" if score >= 8 else "✅" if score >= 5 else "📄"
+            mock_tag = " [模拟]" if is_mock else ""
+            
+            lines.append(f"#### {emoji} [{analysis.get('paper_title', 'N/A')}]({analysis.get('paper_link', '')}){mock_tag}")
+            lines.append("")
+            lines.append(f"**关联度评分**: {score}/10 | **建议优先级**: {analysis.get('priority', 'N/A')}")
+            lines.append("")
+            
+            full_text = analysis.get('full_analysis', '')
+            summary = '\n'.join(full_text.split('\n')[:15])
+            lines.append(summary)
+            lines.append("")
+            lines.append("---")
+            lines.append("")
     else:
-        lines.append("_暂无高优先级论文分析_")
+        lines.append("_暂无LLM分析数据_")
+        lines.append("")
     
-    # 统计
-    total_analyzed = len(db["analyses"])
-    mock_count = len([a for a in db["analyses"].values() if a.get("status") == "mock"])
+    total = len(db.get("analyses", {}))
+    completed = len([a for a in db.get("analyses", {}).values() if a.get("status") == "completed"])
+    mock_count = len([a for a in db.get("analyses", {}).values() if a.get("status") == "mock"])
     
-    lines.append("---")
+    lines.append(f"📊 **分析统计**: 总计 {total} 篇 | 真实API {completed} 篇 | 模拟 {mock_count} 篇")
     lines.append("")
-    lines.append(f"📊 **分析统计**: 总计 {total_analyzed} 篇 | 模拟分析 {mock_count} 篇")
-    lines.append("")
-    lines.append("💡 *注意：当前使用模拟分析。接入LLM API后可获得深度解读。*")
+    
+    if mock_count > 0:
+        lines.append("⚠️ *部分分析使用模拟数据。API配置完成后将提供真实深度解读。*")
+    else:
+        lines.append("💡 *每篇分析消耗约2-4K tokens*")
     
     return '\n'.join(lines)
 
 
-def format_llm_analysis(paper, analysis):
-    """格式化LLM分析结果"""
-    rel = analysis.get("relevance", {})
-    exp = analysis.get("experiments", {})
-    code = analysis.get("code_availability", {})
-    
-    return f"""
-#### 📄 [{paper.get('title', 'N/A')}]({paper.get('link', '')})
-
-**一句话总结**: {analysis.get('one_line_summary', 'N/A')}
-
-**建议优先级**: 🔴 {rel.get('priority', 'N/A').upper()}
-
-**核心方法**: {analysis.get('core_method', {}).get('name', 'N/A')}
-
-**实验环境**: {exp.get('environment', 'N/A')}
-
-**开源代码**: {'✅ 有' if code.get('has_code') else '❌ 未提及'}
-
----
-"""
-
-
 def main():
     """主函数"""
-    print("=" * 50)
-    print("LLM Paper Deep Analyzer")
-    print("=" * 50)
+    log_message("=" * 50)
+    log_message("LLM Paper Deep Analyzer Started")
+    log_message("=" * 50)
     
-    # 加载论文
     db = load_papers_db()
     papers = db.get("papers", [])
     
     if not papers:
-        print("No papers found in database.")
+        log_message("No papers found in database")
         return
     
-    print(f"Loaded {len(papers)} papers")
+    log_message(f"Loaded {len(papers)} papers from database")
     
-    # 分析论文（限制数量以节省预算）
-    print("\nAnalyzing papers with LLM...")
-    analyzed = analyze_papers_with_llm(papers, limit=5)
-    print(f"Analyzed {analyzed} papers")
+    log_message("Starting paper analysis...")
+    analyzed = analyze_papers(papers, limit=3)
+    log_message(f"Analyzed {analyzed} papers")
     
-    # 生成报告
     report = generate_llm_report(top_n=3)
-    report_path = "/root/.openclaw/workspace/reports/llm_analysis.md"
-    with open(report_path, 'w') as f:
+    report_path = os.path.join(REPORTS_DIR, "llm_analysis.md")
+    with open(report_path, 'w', encoding='utf-8') as f:
         f.write(report)
     
-    print(f"\nReport saved to {report_path}")
-    print(f"Total LLM analyses in database: {len(load_llm_analysis_db().get('analyses', {}))}")
+    log_message(f"Report saved to {report_path}")
+    log_message("=" * 50)
 
 
 if __name__ == "__main__":
