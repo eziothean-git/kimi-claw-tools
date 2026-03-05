@@ -1,0 +1,31 @@
+name: Weekly Report Generator
+
+on:
+  schedule:
+    # 每周一 08:00 Asia/Shanghai (UTC+8) = 00:00 UTC Sunday night
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+jobs:
+  generate-weekly-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout tools repo
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Generate weekly report
+      run: |
+        python src/weekly_report.py
+      
+    - name: Upload weekly report
+      uses: actions/upload-artifact@v4
+      with:
+        name: weekly-report-${{ github.run_id }}
+        path: |
+          weekly/*.md
