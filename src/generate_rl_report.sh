@@ -16,13 +16,32 @@ echo "_针对 Ezio's RL ToolBox 开发者的个性化日报_" >> "$REPORT_FILE"
 echo "" >> "$REPORT_FILE"
 
 # ============================================
-# 1. ArXiv 论文推送 (NEW)
+# 1. ArXiv 论文推送 + 智能分析
 # ============================================
 echo "## 📄 正在获取 ArXiv 论文..." >&2
 python3 /root/.openclaw/workspace/scripts/arxiv_tracker.py > /dev/null 2>&1
 
-if [ -f "$REPORT_DIR/arxiv_section.md" ]; then
-  cat "$REPORT_DIR/arxiv_section.md" >> "$REPORT_FILE"
+# 运行论文分析器
+echo "## 🧠 正在分析论文相关性..." >&2
+python3 /root/.openclaw/workspace/scripts/paper_analyzer.py > /dev/null 2>&1
+
+# 运行LLM深度分析（预算控制：只分析前3篇）
+echo "## 🔬 正在运行LLM深度分析..." >&2
+python3 /root/.openclaw/workspace/scripts/llm_analyzer.py > /dev/null 2>&1
+
+# 生成预算报告
+echo "## 💰 正在生成预算报告..." >&2
+python3 /root/.openclaw/workspace/scripts/budget_tracker.py > /dev/null 2>&1
+
+# 添加论文分析到报告
+if [ -f "$REPORT_DIR/paper_analysis.md" ]; then
+  cat "$REPORT_DIR/paper_analysis.md" >> "$REPORT_FILE"
+  echo "" >> "$REPORT_FILE"
+fi
+
+# 添加预算报告
+if [ -f "$REPORT_DIR/budget_report.md" ]; then
+  cat "$REPORT_DIR/budget_report.md" >> "$REPORT_FILE"
   echo "" >> "$REPORT_FILE"
 fi
 

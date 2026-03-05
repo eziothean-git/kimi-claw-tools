@@ -7,8 +7,12 @@ LLM Paper Deep Analyzer - Using Kimi API (with fallback)
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
+
+# 添加脚本目录到路径
+sys.path.insert(0, '/root/.openclaw/workspace/scripts')
 
 # 配置
 REPORTS_DIR = "/root/.openclaw/workspace/reports"
@@ -19,6 +23,13 @@ LOGS_DIR = "/root/.openclaw/workspace/logs"
 # 确保目录存在
 os.makedirs(REPORTS_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
+
+# 导入预算追踪
+try:
+    from budget_tracker import check_budget_status, record_usage
+    BUDGET_TRACKING = True
+except ImportError:
+    BUDGET_TRACKING = False
 
 
 def log_message(msg, level="INFO"):
@@ -226,7 +237,18 @@ def parse_analysis_response(response, paper, is_mock=False):
 
 
 def analyze_papers(papers, limit=3):
-    """分析论文"""
+    """分析论文（带预算控制）"""
+    # 检查预算
+    if BUDGET_TRACKING:
+        budget_status = check_budget_status()
+        available_papers = budget_status["papers_available_today"]
+        if available_papers <= 0:
+            log_message("Daily budget exhausted, skipping LLM analysis", "WARN")
+            return 0
+        # 限制分析数量不超过预算允许
+        limit = min(limit, available_papers)
+        log_message(f"Budget check: {available_papers} papers available today, analyzing {limit}")
+    
     db = load_llm_analysis_db()
     
     # 筛选高相关且未分析的论文
@@ -263,6 +285,11 @@ def analyze_papers(papers, limit=3):
             if analysis:
                 db.setdefault("analyses", {})[uid] = analysis
                 analyzed_count += 1
+                
+                # 记录预算使用
+                if BUDGET_TRACKING and not is_mock:
+                    record_usage(3000, 1500, f"Paper analysis: {paper.get('title', '')[:50]}...")
+                
                 log_message(f"Analysis completed for {paper.get('title', '')[:60]}...")
     
     save_llm_analysis_db(db)
