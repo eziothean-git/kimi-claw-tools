@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kimi Code - CLI tool for Kimi API integration
+Kimi Code - CLI tool for Kimi API integration using OpenAI SDK
 Logs all operations to file instead of stdout
 """
 
@@ -22,57 +22,58 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.FileHandler(log_file, encoding='utf-8'),
-        # No stdout handler - avoid blocking chat
     ]
 )
 logger = logging.getLogger('kimi_code')
 
+# Import OpenAI SDK
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    logger.error("OpenAI SDK not available")
+
 # API Configuration
-KIMI_API_KEY = os.environ.get('KIMI_API_KEY') or open('/root/.openclaw/.env').read().split('KIMI_API_KEY=')[1].split('\n')[0]
+KIMI_API_KEY = os.environ.get('KIMI_API_KEY') or "sk-kimi-csx7jTKeTi48D4rfP1nldksBx9snydd7foY6ffPp7nRSkbmSSAmwARvAXJ5rOJyb"
 KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.moonshot.cn/v1')
 KIMI_MODEL = os.environ.get('KIMI_MODEL', 'kimi-k2-5')
 
 
+def get_client():
+    """Get OpenAI client configured for Kimi"""
+    if not OPENAI_AVAILABLE:
+        return None
+    return OpenAI(
+        api_key=KIMI_API_KEY,
+        base_url=KIMI_BASE_URL
+    )
+
+
 def call_kimi_api(prompt, model=None, temperature=0.3, max_tokens=4096):
-    """Call Kimi API with the given prompt"""
-    import urllib.request
-    import urllib.error
+    """Call Kimi API using OpenAI SDK"""
+    client = get_client()
+    if not client:
+        return "Error: OpenAI SDK not available"
     
     model = model or KIMI_MODEL
     
-    headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {KIMI_API_KEY}'
-    }
-    
-    data = {
-        'model': model,
-        'messages': [
-            {'role': 'system', 'content': 'You are a helpful coding assistant. Provide concise, practical code solutions.'},
-            {'role': 'user', 'content': prompt}
-        ],
-        'temperature': temperature,
-        'max_tokens': max_tokens
-    }
-    
     try:
-        req = urllib.request.Request(
-            f'{KIMI_BASE_URL}/chat/completions',
-            data=json.dumps(data).encode('utf-8'),
-            headers=headers,
-            method='POST'
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a helpful coding assistant. Provide concise, practical code solutions."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens
         )
         
-        with urllib.request.urlopen(req, timeout=120) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            return result['choices'][0]['message']['content']
-    
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode('utf-8')
-        logger.error(f'API HTTP Error: {e.code} - {error_body}')
-        return f'Error: API returned {e.code}'
+        logger.info(f"API call successful. Usage: {response.usage}")
+        return response.choices[0].message.content
+        
     except Exception as e:
-        logger.error(f'API Call Error: {str(e)}')
+        logger.error(f'API Error: {str(e)}')
         return f'Error: {str(e)}'
 
 
